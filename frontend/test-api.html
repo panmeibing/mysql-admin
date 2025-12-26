@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Client Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .test-section h3 {
+            margin-top: 0;
+        }
+        button {
+            padding: 8px 16px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 3px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .loading {
+            color: blue;
+            font-weight: bold;
+        }
+        .success {
+            color: green;
+        }
+        .error {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <h1>MySQL Admin API Client Test</h1>
+    
+    <div id="loading-indicator" class="loading" style="display: none;">
+        Loading...
+    </div>
+
+    <div class="test-section">
+        <h3>1. Test Loading State Interceptor</h3>
+        <button onclick="testLoadingState()">Test Loading State</button>
+        <div id="loading-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>2. Test Health Check</h3>
+        <button onclick="testHealthCheck()">Check Health</button>
+        <div id="health-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>3. Test Network Error Handling</h3>
+        <button onclick="testNetworkError()">Simulate Network Error</button>
+        <div id="network-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>4. Test List Databases</h3>
+        <button onclick="testListDatabases()">List Databases</button>
+        <div id="databases-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>5. Test Error Response Handling</h3>
+        <button onclick="testErrorResponse()">Test 404 Error</button>
+        <div id="error-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>6. Test Retry Mechanism</h3>
+        <button onclick="testRetry()">Test Retry</button>
+        <div id="retry-result" class="result"></div>
+    </div>
+
+    <!-- Axios -->
+    <script src="https://unpkg.com/axios@1.6.2/dist/axios.min.js"></script>
+    
+    <!-- API Client -->
+    <script src="/js/api.js"></script>
+
+    <script>
+        // Register loading state callback
+        apiClient.onLoadingChange((isLoading) => {
+            const indicator = document.getElementById('loading-indicator');
+            indicator.style.display = isLoading ? 'block' : 'none';
+            console.log('Loading state changed:', isLoading);
+        });
+
+        function log(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            const timestamp = new Date().toLocaleTimeString();
+            element.textContent = `[${timestamp}] ${message}`;
+            element.className = `result ${type}`;
+        }
+
+        async function testLoadingState() {
+            log('loading-result', 'Testing loading state...', 'loading');
+            
+            try {
+                const startLoading = apiClient.isLoading();
+                log('loading-result', `Initial loading state: ${startLoading}`, 'info');
+                
+                // Make a request and check loading state
+                const promise = apiClient.checkHealth();
+                const duringLoading = apiClient.isLoading();
+                
+                await promise;
+                const afterLoading = apiClient.isLoading();
+                
+                log('loading-result', 
+                    `Loading states:\n` +
+                    `- Before: ${startLoading}\n` +
+                    `- During: ${duringLoading}\n` +
+                    `- After: ${afterLoading}\n` +
+                    `Test ${duringLoading && !afterLoading ? 'PASSED' : 'FAILED'}`,
+                    duringLoading && !afterLoading ? 'success' : 'error'
+                );
+            } catch (error) {
+                log('loading-result', `Error: ${JSON.stringify(error, null, 2)}`, 'error');
+            }
+        }
+
+        async function testHealthCheck() {
+            log('health-result', 'Checking health...', 'loading');
+            
+            try {
+                const result = await apiClient.checkHealth();
+                log('health-result', 
+                    `Health check successful:\n${JSON.stringify(result, null, 2)}`,
+                    'success'
+                );
+            } catch (error) {
+                log('health-result', 
+                    `Health check failed:\n${JSON.stringify(error, null, 2)}`,
+                    'error'
+                );
+            }
+        }
+
+        async function testNetworkError() {
+            log('network-result', 'Testing network error handling...', 'loading');
+            
+            // Create a temporary axios instance with invalid URL
+            const oldBaseURL = axios.defaults.baseURL;
+            
+            try {
+                // Try to connect to non-existent server
+                const response = await axios.get('http://localhost:99999/api/health', {
+                    timeout: 2000
+                });
+            } catch (error) {
+                const handledError = apiClient.handleError(error);
+                log('network-result', 
+                    `Network error handled correctly:\n${JSON.stringify(handledError, null, 2)}\n\n` +
+                    `Type: ${handledError.type}\n` +
+                    `Retryable: ${handledError.retryable}\n` +
+                    `Test ${handledError.type === 'network' ? 'PASSED' : 'FAILED'}`,
+                    handledError.type === 'network' ? 'success' : 'error'
+                );
+            }
+        }
+
+        async function testListDatabases() {
+            log('databases-result', 'Listing databases...', 'loading');
+            
+            try {
+                const result = await apiClient.listDatabases();
+                log('databases-result', 
+                    `Databases retrieved:\n${JSON.stringify(result, null, 2)}`,
+                    'success'
+                );
+            } catch (error) {
+                log('databases-result', 
+                    `Failed to list databases:\n${JSON.stringify(error, null, 2)}`,
+                    'error'
+                );
+            }
+        }
+
+        async function testErrorResponse() {
+            log('error-result', 'Testing error response handling...', 'loading');
+            
+            try {
+                // Try to get DDL for non-existent database
+                const result = await apiClient.getDatabaseDDL('nonexistent_database_12345');
+                log('error-result', `Unexpected success: ${JSON.stringify(result)}`, 'error');
+            } catch (error) {
+                log('error-result', 
+                    `Error handled correctly:\n${JSON.stringify(error, null, 2)}\n\n` +
+                    `Message: ${error.message}\n` +
+                    `Type: ${error.type}\n` +
+                    `Status: ${error.status}\n` +
+                    `Test ${error.type && error.message ? 'PASSED' : 'FAILED'}`,
+                    error.type && error.message ? 'success' : 'error'
+                );
+            }
+        }
+
+        async function testRetry() {
+            log('retry-result', 'Testing retry mechanism...', 'loading');
+            
+            let attemptCount = 0;
+            const testFn = async () => {
+                attemptCount++;
+                if (attemptCount < 3) {
+                    // Simulate retryable error
+                    throw {
+                        code: 'ERR_NETWORK',
+                        message: 'Network error'
+                    };
+                }
+                return { success: true, attempts: attemptCount };
+            };
+
+            try {
+                const result = await apiClient.retryRequest(testFn, 3, 100);
+                log('retry-result', 
+                    `Retry successful after ${result.attempts} attempts:\n${JSON.stringify(result, null, 2)}\n` +
+                    `Test ${result.attempts === 3 ? 'PASSED' : 'FAILED'}`,
+                    result.attempts === 3 ? 'success' : 'error'
+                );
+            } catch (error) {
+                log('retry-result', 
+                    `Retry failed:\n${JSON.stringify(error, null, 2)}`,
+                    'error'
+                );
+            }
+        }
+
+        // Run initial test on load
+        window.addEventListener('load', () => {
+            console.log('API Client Test Page Loaded');
+            console.log('API Client:', apiClient);
+        });
+    </script>
+</body>
+</html>

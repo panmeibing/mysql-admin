@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MySQL Admin - 登录</title>
+    
+    <!-- Element Plus CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.4.4/dist/index.css">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .login-container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 48px;
+            width: 100%;
+            max-width: 450px;
+            animation: slideIn 0.5s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .login-header h1 {
+            font-size: 28px;
+            color: #303133;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+
+        .login-header h1 i {
+            font-size: 32px;
+            color: #667eea;
+        }
+
+        .login-header p {
+            color: #909399;
+            font-size: 14px;
+        }
+
+        .login-form {
+            margin-top: 32px;
+        }
+
+        .el-form-item {
+            margin-bottom: 24px;
+        }
+
+        .el-input__wrapper {
+            padding: 12px 16px;
+            border-radius: 8px;
+        }
+
+        .login-button {
+            width: 100%;
+            padding: 14px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            margin-top: 8px;
+        }
+
+        .login-button:hover {
+            background: linear-gradient(135deg, #7c8ff0 0%, #8a5bb0 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .login-footer {
+            margin-top: 32px;
+            text-align: center;
+            color: #909399;
+            font-size: 13px;
+        }
+
+        .el-message--error {
+            min-width: 380px;
+        }
+
+        .el-message__content {
+            line-height: 1.5;
+        }
+
+        .security-notice {
+            background: #f0f7ff;
+            border-left: 4px solid #409eff;
+            padding: 16px;
+            border-radius: 8px;
+            margin-top: 24px;
+        }
+
+        .security-notice p {
+            color: #606266;
+            font-size: 13px;
+            line-height: 1.6;
+            margin: 0;
+        }
+
+        .security-notice i {
+            color: #409eff;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="login-container">
+            <div class="login-header">
+                <h1>
+                    <i class="el-icon-lock"></i>
+                    MySQL Admin
+                </h1>
+                <p>请输入管理密钥以访问系统</p>
+            </div>
+
+            <el-form :model="loginForm" class="login-form" @submit.prevent="handleLogin">
+                <el-form-item>
+                    <el-input
+                        v-model="loginForm.secretKey"
+                        type="password"
+                        placeholder="请输入管理密钥"
+                        size="large"
+                        show-password
+                        @keyup.enter="handleLogin"
+                        :disabled="loading">
+                        <template #prefix>
+                            <i class="el-icon-key"></i>
+                        </template>
+                    </el-input>
+                </el-form-item>
+
+                <el-button
+                    type="primary"
+                    class="login-button"
+                    @click="handleLogin"
+                    :loading="loading">
+                    {{ loading ? '验证中...' : '登录' }}
+                </el-button>
+            </el-form>
+
+            <div class="security-notice">
+                <p>
+                    <i class="el-icon-warning"></i>
+                    <strong>安全提示：</strong>此密钥用于保护数据库管理功能，请妥善保管。默认密钥可在配置文件中找到。
+                </p>
+            </div>
+
+            <div class="login-footer">
+                <p>MySQL Admin v1.0.0</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vue 3 - 使用多个CDN源作为备份 -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.3.11/dist/vue.global.prod.js"></script>
+    
+    <!-- Element Plus -->
+    <script src="https://cdn.jsdelivr.net/npm/element-plus@2.4.4/dist/index.full.min.js"></script>
+    
+    <!-- Axios -->
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
+
+    <script>
+        // Check if Vue loaded successfully
+        if (typeof Vue === 'undefined') {
+            document.body.innerHTML = '<div style="text-align: center; padding: 50px; color: red;">Vue 加载失败，请刷新页面重试</div>';
+            throw new Error('Vue failed to load');
+        }
+        
+        if (typeof ElementPlus === 'undefined') {
+            document.body.innerHTML = '<div style="text-align: center; padding: 50px; color: red;">Element Plus 加载失败，请刷新页面重试</div>';
+            throw new Error('ElementPlus failed to load');
+        }
+
+        const { createApp } = Vue;
+        const { ElMessage } = ElementPlus;
+
+        const app = createApp({
+            data() {
+                return {
+                    loginForm: {
+                        secretKey: ''
+                    },
+                    loading: false
+                };
+            },
+            mounted() {
+                // Check if already authenticated
+                const adminKey = localStorage.getItem('adminKey');
+                if (adminKey) {
+                    // Verify the stored key
+                    this.verifyStoredKey(adminKey);
+                }
+            },
+            methods: {
+                async verifyStoredKey(key) {
+                    try {
+                        const response = await axios.post('/api/auth/verify', {
+                            secret_key: key
+                        });
+                        
+                        if (response.data.success) {
+                            // Key is valid, redirect to main page
+                            window.location.href = '/index.html';
+                        } else {
+                            // Key is invalid, clear it
+                            localStorage.removeItem('adminKey');
+                        }
+                    } catch (error) {
+                        // Key is invalid, clear it
+                        localStorage.removeItem('adminKey');
+                    }
+                },
+                async handleLogin() {
+                    if (!this.loginForm.secretKey) {
+                        ElMessage.error('请输入管理密钥');
+                        return;
+                    }
+
+                    this.loading = true;
+
+                    try {
+                        const response = await axios.post('/api/auth/verify', {
+                            secret_key: this.loginForm.secretKey
+                        });
+
+                        if (response.data.success) {
+                            // Store the key in localStorage
+                            localStorage.setItem('adminKey', this.loginForm.secretKey);
+                            
+                            ElMessage.success('登录成功');
+                            
+                            // Redirect to main page
+                            setTimeout(() => {
+                                window.location.href = '/index.html';
+                            }, 500);
+                        }
+                    } catch (error) {
+                        console.error('Login error:', error);
+                        
+                        if (error.response) {
+                            const status = error.response.status;
+                            const detail = error.response.data?.detail || error.message;
+                            
+                            if (status === 401) {
+                                // Invalid key
+                                ElMessage.error(detail);
+                            } else if (status === 429) {
+                                // Rate limit exceeded
+                                ElMessage({
+                                    message: detail,
+                                    type: 'error',
+                                    duration: 5000,
+                                    showClose: true
+                                });
+                            } else {
+                                ElMessage.error('登录失败：' + detail);
+                            }
+                        } else {
+                            ElMessage.error('登录失败：' + error.message);
+                        }
+                        
+                        this.loginForm.secretKey = '';
+                    } finally {
+                        this.loading = false;
+                    }
+                }
+            }
+        });
+
+        app.use(ElementPlus);
+        app.mount('#app');
+    </script>
+</body>
+</html>

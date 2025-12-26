@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MySQL 管理工具</title>
+    
+    <!-- Element Plus CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.4.4/dist/index.css">
+    
+    <!-- Ace Editor -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.2/ace.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.2/mode-sql.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.2/theme-monokai.js"></script>
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div id="app" v-cloak>
+        <!-- Header -->
+        <el-header class="app-header">
+            <div class="header-content">
+                <h1 class="app-title">
+                    <i class="el-icon-database"></i>
+                    MySQL 管理工具
+                </h1>
+                <div class="header-actions">
+                    <el-tag :type="connectionStatus === 'connected' ? 'success' : 'danger'">
+                        {{ connectionStatus === 'connected' ? '已连接' : '未连接' }}
+                    </el-tag>
+                    <el-tag v-if="currentDatabase" type="info">
+                        <i class="el-icon-folder-opened"></i> {{ currentDatabase }}
+                    </el-tag>
+                    <el-button 
+                        type="danger" 
+                        size="small"
+                        @click="handleLogout">
+                        <i class="el-icon-switch-button"></i> 退出登录
+                    </el-button>
+                </div>
+            </div>
+        </el-header>
+
+        <!-- Main Container -->
+        <el-container class="main-container">
+            <!-- Sidebar - Database Explorer -->
+            <el-aside width="300px" class="sidebar">
+                <div class="sidebar-header">
+                    <h3>数据库浏览器</h3>
+                    <el-button 
+                        type="primary" 
+                        size="small" 
+                        @click="showCreateDatabaseDialog = true"
+                        :loading="loading">
+                        <i class="el-icon-plus"></i> 新建数据库
+                    </el-button>
+                </div>
+                
+                <div class="database-tree" v-loading="loading">
+                    <!-- Database tree will be populated here -->
+                    <div v-if="databases.length === 0 && !loading" class="empty-state">
+                        <p>未找到数据库</p>
+                    </div>
+                    
+                    <el-tree
+                        v-else
+                        :data="databaseTree"
+                        :props="treeProps"
+                        node-key="id"
+                        :expand-on-click-node="true"
+                        :default-expand-all="false"
+                        @node-click="handleNodeClick"
+                        @node-contextmenu="handleNodeContextMenu"
+                        class="database-explorer-tree">
+                        <template #default="{ node, data }">
+                            <span class="tree-node">
+                                <i :class="getNodeIcon(data, node)"></i>
+                                <span class="tree-node-label">{{ node.label }}</span>
+                            </span>
+                        </template>
+                    </el-tree>
+                </div>
+            </el-aside>
+
+            <!-- Main Content Area -->
+            <el-main class="content-area">
+                <!-- Tab Navigation -->
+                <el-tabs v-model="activeTab" type="card" @tab-click="handleTabClick">
+                    <!-- Table Viewer Tab -->
+                    <el-tab-pane label="表查看器" name="table">
+                        <div v-if="!selectedTable" class="empty-state">
+                            <el-empty description="选择一个表以查看其内容"></el-empty>
+                        </div>
+                        
+                        <div v-else class="table-viewer">
+                            <div class="table-header">
+                                <h3>{{ selectedDatabase }}.{{ selectedTable }}</h3>
+                                <div class="table-actions">
+                                    <el-button 
+                                        type="success" 
+                                        size="small"
+                                        @click="openAddRowDialog"
+                                        :disabled="tableLoading">
+                                        <i class="el-icon-plus"></i> 添加行
+                                    </el-button>
+                                    <el-button 
+                                        type="danger" 
+                                        size="small"
+                                        @click="deleteSelectedRows"
+                                        :disabled="selectedRows.length === 0 || tableLoading">
+                                        <i class="el-icon-delete"></i> 删除行
+                                    </el-button>
+                                    <el-button 
+                                        type="primary" 
+                                        size="small"
+                                        @click="loadTableData"
+                                        :loading="tableLoading">
+                                        <i class="el-icon-refresh"></i> 刷新
+                                    </el-button>
+                                </div>
+                            </div>
+                            
+                            <!-- Filter Bar -->
+                            <div class="filter-bar">
+                                <div class="filter-input-group">
+                                    <el-input
+                                        v-model="filterCondition"
+                                        placeholder="输入过滤条件 (例如: id > 10 AND name LIKE '%test%')"
+                                        clearable
+                                        @keyup.enter="applyFilter"
+                                        class="filter-input">
+                                        <template #prepend>
+                                            <span>WHERE</span>
+                                        </template>
+                                    </el-input>
+                                    <el-button 
+                                        type="primary" 
+                                        @click="applyFilter"
+                                        :loading="tableLoading"
+                                        :disabled="!filterCondition.trim()">
+                                        <i class="el-icon-search"></i> 应用过滤
+                                    </el-button>
+                                    <el-button 
+                                        @click="clearFilter"
+                                        :disabled="!activeFilter">
+                                        <i class="el-icon-close"></i> 清除过滤
+                                    </el-button>
+                                </div>
+                                <div v-if="activeFilter" class="active-filter-info">
+                                    <el-tag type="info" closable @close="clearFilter">
+                                        当前过滤: WHERE {{ activeFilter }}
+                                    </el-tag>
+                                </div>
+                            </div>
+                            
+                            <div class="table-content" v-loading="tableLoading">
+                                <!-- Empty state when no data -->
+                                <div v-if="tableData.rows.length === 0 && !tableLoading" class="empty-table-state">
+                                    <el-empty description="此表为空"></el-empty>
+                                </div>
+                                
+                                <!-- Table data grid -->
+                                <div v-else>
+                                    <el-table
+                                        :data="getPaginatedRows()"
+                                        stripe
+                                        border
+                                        style="width: 100%"
+                                        :max-height="500"
+                                        class="data-table"
+                                        @row-dblclick="handleRowDoubleClick"
+                                        @selection-change="handleSelectionChange">
+                                        <!-- Selection column -->
+                                        <el-table-column
+                                            type="selection"
+                                            width="55">
+                                        </el-table-column>
+                                        
+                                        <!-- Data columns -->
+                                        <el-table-column
+                                            v-for="column in tableData.columns"
+                                            :key="column.name"
+                                            :prop="column.name"
+                                            :label="column.name"
+                                            :min-width="150"
+                                            show-overflow-tooltip>
+                                            <template #header>
+                                                <div class="column-header">
+                                                    <span class="column-name">{{ column.name }}</span>
+                                                    <span class="column-type">{{ getColumnTypeDisplay(column) }}</span>
+                                                </div>
+                                            </template>
+                                            <template #default="scope">
+                                                <!-- Editable cell -->
+                                                <div v-if="isRowEditing(scope.row)" class="editable-cell">
+                                                    <el-input
+                                                        v-model="editingRowData[column.name]"
+                                                        size="small"
+                                                        :placeholder="`${column.name}${isColumnRequired(column) ? ' (必填)' : ''}`"
+                                                        :class="{'required-field': isColumnRequired(column)}">
+                                                    </el-input>
+                                                </div>
+                                                <!-- Read-only cell -->
+                                                <span v-else class="cell-content">
+                                                    {{ scope.row[column.name] !== null ? scope.row[column.name] : 'NULL' }}
+                                                </span>
+                                            </template>
+                                        </el-table-column>
+                                        
+                                        <!-- Actions column for editing -->
+                                        <el-table-column
+                                            label="操作"
+                                            width="150"
+                                            fixed="right">
+                                            <template #default="scope">
+                                                <div v-if="isRowEditing(scope.row)" class="row-actions">
+                                                    <el-button
+                                                        type="success"
+                                                        size="small"
+                                                        @click="saveEditedRow">
+                                                        保存
+                                                    </el-button>
+                                                    <el-button
+                                                        size="small"
+                                                        @click="cancelEditingRow">
+                                                        取消
+                                                    </el-button>
+                                                </div>
+                                                <div v-else class="row-actions">
+                                                    <el-button
+                                                        type="primary"
+                                                        size="small"
+                                                        @click="startEditingRow(scope.row)">
+                                                        编辑
+                                                    </el-button>
+                                                </div>
+                                            </template>
+                                        </el-table-column>
+                                    </el-table>
+                                    
+                                    <!-- Pagination -->
+                                    <div class="table-pagination">
+                                        <el-pagination
+                                            v-model:current-page="currentPage"
+                                            v-model:page-size="pageSize"
+                                            :page-sizes="[10, 25, 50, 100, 200]"
+                                            :total="tableData.total"
+                                            layout="total, sizes, prev, pager, next, jumper"
+                                            @size-change="handlePageSizeChange"
+                                            @current-change="handlePageChange">
+                                        </el-pagination>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </el-tab-pane>
+
+                    <!-- SQL Query Editor Tab -->
+                    <el-tab-pane label="SQL 查询" name="query">
+                        <div class="query-editor">
+                            <div class="editor-toolbar">
+                                <el-button 
+                                    type="primary" 
+                                    @click="executeQuery"
+                                    :loading="queryLoading">
+                                    <i class="el-icon-caret-right"></i> 执行
+                                </el-button>
+                                <el-button @click="clearQuery">
+                                    <i class="el-icon-delete"></i> 清空
+                                </el-button>
+                                <el-tag v-if="currentDatabase" type="info" size="small" style="margin-left: 12px;">
+                                    <i class="el-icon-folder-opened"></i> 当前数据库：{{ currentDatabase }}
+                                </el-tag>
+                                <el-tag v-else type="warning" size="small" style="margin-left: 12px;">
+                                    <i class="el-icon-warning"></i> 未选择数据库
+                                </el-tag>
+                            </div>
+                            
+                            <!-- Ace Editor Container -->
+                            <div id="sql-editor" class="sql-editor"></div>
+                            
+                            <!-- Query Results -->
+                            <div class="query-results" v-loading="queryLoading">
+                                <!-- Success Results - SELECT queries -->
+                                <div v-if="queryResults && queryResults.success && queryResults.rows" class="query-success">
+                                    <div class="results-header">
+                                        <h4>查询结果</h4>
+                                        <el-tag type="success">返回 {{ queryResults.rows.length }} 行</el-tag>
+                                    </div>
+                                    
+                                    <!-- Results Table -->
+                                    <el-table
+                                        :data="queryResults.rows"
+                                        stripe
+                                        border
+                                        style="width: 100%; margin-top: 10px;"
+                                        :max-height="400"
+                                        class="results-table">
+                                        <el-table-column
+                                            v-for="column in queryResults.columns"
+                                            :key="column"
+                                            :prop="column"
+                                            :label="column"
+                                            :min-width="150"
+                                            show-overflow-tooltip>
+                                            <template #default="scope">
+                                                <span>{{ scope.row[column] !== null ? scope.row[column] : 'NULL' }}</span>
+                                            </template>
+                                        </el-table-column>
+                                    </el-table>
+                                </div>
+                                
+                                <!-- Success Results - DML statements (INSERT, UPDATE, DELETE) -->
+                                <div v-else-if="queryResults && queryResults.success && queryResults.affected_rows !== undefined" class="query-success">
+                                    <div class="results-header">
+                                        <h4>查询执行成功</h4>
+                                        <el-tag type="success">影响 {{ queryResults.affected_rows }} 行</el-tag>
+                                    </div>
+                                    <el-alert
+                                        type="success"
+                                        :closable="false"
+                                        show-icon
+                                        style="margin-top: 10px;">
+                                        <template #title>
+                                            查询执行成功，影响了 {{ queryResults.affected_rows }} 行。
+                                        </template>
+                                    </el-alert>
+                                </div>
+                                
+                                <!-- Error Results -->
+                                <div v-else-if="queryResults && !queryResults.success" class="query-error">
+                                    <div class="results-header">
+                                        <h4>查询错误</h4>
+                                        <el-tag type="danger">失败</el-tag>
+                                    </div>
+                                    <el-alert
+                                        type="error"
+                                        :closable="false"
+                                        show-icon
+                                        style="margin-top: 10px;">
+                                        <template #title>
+                                            SQL 错误
+                                        </template>
+                                        <pre class="error-message">{{ queryResults.error }}</pre>
+                                    </el-alert>
+                                </div>
+                                
+                                <!-- Empty State -->
+                                <div v-else class="empty-state">
+                                    <el-empty description="执行 SQL 查询以查看结果">
+                                        <template #image>
+                                            <i class="el-icon-document" style="font-size: 64px; color: #909399;"></i>
+                                        </template>
+                                    </el-empty>
+                                </div>
+                            </div>
+                        </div>
+                    </el-tab-pane>
+                </el-tabs>
+            </el-main>
+        </el-container>
+
+        <!-- Create Database Dialog -->
+        <el-dialog
+            v-model="showCreateDatabaseDialog"
+            title="创建新数据库"
+            width="400px">
+            <el-form :model="newDatabase" label-width="120px">
+                <el-form-item label="数据库名称">
+                    <el-input 
+                        v-model="newDatabase.name" 
+                        placeholder="输入数据库名称"
+                        @keyup.enter="createDatabase">
+                    </el-input>
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <span class="dialog-footer">
+                    <el-button @click="showCreateDatabaseDialog = false">取消</el-button>
+                    <el-button 
+                        type="primary" 
+                        @click="createDatabase"
+                        :loading="loading">
+                        创建
+                    </el-button>
+                </span>
+            </template>
+        </el-dialog>
+
+        <!-- Add Row Dialog -->
+        <el-dialog
+            v-model="showAddRowDialog"
+            title="添加新行"
+            width="500px">
+            <el-form :model="newRowData" label-width="150px" ref="addRowForm">
+                <el-form-item 
+                    v-for="column in tableData.columns"
+                    :key="column.name"
+                    :label="column.name"
+                    :required="isColumnRequired(column)"
+                    :rules="getColumnValidationRules(column)">
+                    <template #label>
+                        <span>
+                            {{ column.name }}
+                            <span v-if="isColumnRequired(column)" class="required-marker">*</span>
+                        </span>
+                    </template>
+                    <el-input 
+                        v-model="newRowData[column.name]" 
+                        :placeholder="`输入 ${column.name}${isColumnRequired(column) ? ' (必填)' : ''}`">
+                        <template #append>
+                            <span class="input-type-hint">{{ getColumnTypeDisplay(column) }}</span>
+                        </template>
+                    </el-input>
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <span class="dialog-footer">
+                    <el-button @click="showAddRowDialog = false">取消</el-button>
+                    <el-button 
+                        type="primary" 
+                        @click="addNewRow"
+                        :loading="loading">
+                        添加行
+                    </el-button>
+                </span>
+            </template>
+        </el-dialog>
+
+        <!-- Context Menu (for right-click actions) -->
+        <div 
+            v-show="showContextMenu"
+            :style="contextMenuStyle"
+            class="context-menu"
+            @mouseleave="hideContextMenu">
+            <div class="context-menu-item" @click="viewDatabaseDDL" v-if="contextMenuType === 'database'">
+                <i class="el-icon-view"></i> 查看 DDL
+            </div>
+            <div class="context-menu-item context-menu-item-danger" @click="confirmDeleteDatabase" v-if="contextMenuType === 'database'">
+                <i class="el-icon-delete"></i> 删除数据库
+            </div>
+            <div class="context-menu-item context-menu-item-danger" @click="confirmDeleteTable" v-if="contextMenuType === 'table'">
+                <i class="el-icon-delete"></i> 删除表
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <el-loading 
+            v-if="globalLoading"
+            fullscreen
+            text="加载中...">
+        </el-loading>
+    </div>
+
+    <!-- Vue 3 -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.3.11/dist/vue.global.prod.js"></script>
+    
+    <!-- Element Plus -->
+    <script src="https://cdn.jsdelivr.net/npm/element-plus@2.4.4/dist/index.full.min.js"></script>
+    
+    <!-- Axios -->
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.2/dist/axios.min.js"></script>
+    
+    <!-- API Client -->
+    <script src="/js/api.js"></script>
+    
+    <!-- Main Application -->
+    <script src="/js/app.js"></script>
+</body>
+</html>
